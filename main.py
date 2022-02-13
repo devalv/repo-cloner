@@ -199,9 +199,6 @@ def main(
 
 if __name__ == "__main__":
 
-    # TODO: create readme
-    # TODO: install githook and github action for linting
-
     user_args = parser.parse_args()
 
     if user_args.verbose:
