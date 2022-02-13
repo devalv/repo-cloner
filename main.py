@@ -191,7 +191,8 @@ def main(
 
     if len(repos_to_clone) != cloned_repos:
         logger.error(f"Not all repos are cloned ({cloned_repos}/{len(repos_to_clone)})")
-    elif compress:
+
+    if compress:
         compress_repos(working_dir, delete_dir=remove)
 
     return None
