@@ -18,14 +18,3 @@ jobs:
         run: pip install black
       - name: Run black --check .
         run: black --line-length=90 --target-version=py39 --check .
-      - name: If needed, commit black changes to the pull request
-        if: failure()
-        run: |
-          black --line-length=90, --target-version=py39 .
-          git config --global user.name 'autoblack'
-          git config --global user.email 'actions@github.com'
-          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/$GITHUB_REPOSITORY
-          git checkout $GITHUB_HEAD_REF
-          git commit -am "fixup: Format Python code with Black"
-          git push
-      - uses: pre-commit/action@v2.0.0
