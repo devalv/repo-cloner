@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-python cloner.py -u=devalv -d=../liked_repos -v -p 10 -w 4
+python cloner.py -u=devalv -d=../liked_repos -v -p 10 -w 1
 """
 
 import argparse
 import logging
 import time
-from concurrent import futures
 from datetime import date
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Iterable, List, Set, Tuple
 
+from multiprocessing import Pool
 from tqdm import tqdm
 import httpx
 from git import Git
@@ -36,47 +36,48 @@ parser.add_argument(
     "-p", "--pages", help="pages of starred repos to get", required=False, default=10, type=int
 )
 parser.add_argument(
-    "-w", "--workers", help="num of threads", required=False, default=2, type=int
+    "-w", "--workers", help="num of threads", required=False, default=1, type=int
 )
 
 
 def clone_repo(directory: Path, url: str) -> bool:
     try:
-        logger.debug(f'Cloning {url}...')
-        # Git(directory).clone(url)
+        Git(directory).clone(url)
     except Exception as msg:  # noqa
         logger.error(msg)
         return False
     return True
 
 
-def clone_repos(repos_dict: Dict[str, str], directory: Path, max_workers: int) -> int:
-    cloned_repos_count: int = 0
+def clone_repos_mp(directory: Path, max_workers: int, repos_urls: Set[str]) -> int:
+    """Run {max_workers} processes with clone_repo for each of repos_urls."""
+    clone_repo_args_iter: Set[Tuple[Path, str]] = {(directory, url) for url in repos_urls}
 
-    with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        to_do_map = dict()
-        for repo, url in repos_dict.items():
-            future = executor.submit(clone_repo, directory, url)
-            to_do_map[future] = url
+    with Pool(processes=max_workers) as p:
+        results: List[bool] = p.starmap(clone_repo, clone_repo_args_iter)
 
-        print(f'{to_do_map=}')
-        done_iter: Iterable = futures.as_completed(to_do_map)
-
-        if logger.isEnabledFor(logging.DEBUG):
-            # TODO: @devalv not verbose тут и в еще одном месте
-            done_iter: Iterable = tqdm(done_iter, total=len(repos_dict))
-
-        for future in done_iter:
-            res_status = future.result()
-            if res_status:
-                cloned_repos_count += 1
-
-    return cloned_repos_count
+    return results.count(True)
 
 
-def get_liked_repos(username: str, pages: int) -> Dict[str, str]:
-    liked_repos: Dict[str, str] = dict()
+def clone_repos_sync(directory: Path, repos_urls: Set[str]) -> int:
+    """Run clone_repo for each of repos_urls."""
+    cloned_repos: int = 0
+    repos_iter: Iterable = repos_urls
 
+    if logger.isEnabledFor(logging.DEBUG):
+        repos_iter: Iterable = tqdm(repos_urls)
+
+    for repo_url in repos_iter:
+        result: bool = clone_repo(directory, repo_url)
+        if result:
+            cloned_repos += 1
+
+    return cloned_repos
+
+
+def get_liked_repos(username: str, pages: int) -> Set[str]:
+    """Synchronously generates a set of repositories from Github that are starred by user."""
+    liked_repos: Set[str] = set()
     pages_iter: Iterable = range(pages + 1)
 
     if logger.isEnabledFor(logging.DEBUG):
@@ -93,17 +94,15 @@ def get_liked_repos(username: str, pages: int) -> Dict[str, str]:
             break
 
         for repo in response.json():
-            name: str = repo.get("name")
             url: str = repo.get("clone_url")
-            if not name:
-                logger.warning(f"Can`t get name of {url=}")
-                continue
             if not url:
-                logger.warning(f"Can`t get url of {name=}")
+                _name: str = repo.get("name")
+                logger.warning(f"Can`t get url of {_name=}")
                 continue
-            liked_repos[name] = url
 
-    logger.info(f"Got {len(liked_repos)} liked repos.")
+            liked_repos.add(url)
+
+    logger.debug(f"Got {len(liked_repos)} liked repos.")
     return liked_repos
 
 
@@ -118,9 +117,11 @@ def main(username: str, directory: str, pages: int, workers: int) -> None:
         working_dir.mkdir()
 
     repos_to_clone = get_liked_repos(username, pages)
-    # repos_to_clone = {v: v for v in range(100)}
 
-    cloned_repos: int = clone_repos(repos_to_clone, directory=working_dir, max_workers=workers)
+    if workers > 1:
+        cloned_repos: int = clone_repos_mp(repos_urls=repos_to_clone, directory=working_dir, max_workers=workers)
+    else:
+        cloned_repos: int = clone_repos_sync(repos_urls=repos_to_clone, directory=working_dir)
 
     if logger.isEnabledFor(logging.DEBUG):
         end_time = time.time()
@@ -140,10 +141,7 @@ if __name__ == "__main__":
     # shutil.make_archive(output_filename, 'zip', dir_name)
 
     # TODO: create readme
-    # TODO: create repo
     # TODO: install githook and github action for linting
-
-    # TODO: треды не сработали - задача не отпускает gil. процессы?
 
     args = parser.parse_args()
 
