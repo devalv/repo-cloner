@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-python cloner.py -u=devalv -d=../liked_repos -v
+python cloner.py -u=devalv -d=../liked_repos -v -p 10 -w 4
 """
 
 import argparse
 import logging
 import time
+from concurrent import futures
 from datetime import date
 from pathlib import Path
 from typing import Dict, Iterable, List
-import asyncio
 
 from tqdm import tqdm
 import httpx
@@ -35,69 +35,43 @@ parser.add_argument(
 parser.add_argument(
     "-p", "--pages", help="pages of starred repos to get", required=False, default=10, type=int
 )
+parser.add_argument(
+    "-w", "--workers", help="num of threads", required=False, default=2, type=int
+)
 
 
-async def clone_repo(directory: Path, repo_url: str) -> bool:
-    # TODO: @devalv remove
+def clone_repo(directory: Path, url: str) -> bool:
     try:
-        Git(directory).clone(repo_url)
-    except:  # noqa
+        logger.debug(f'Cloning {url}...')
+        # Git(directory).clone(url)
+    except Exception as msg:  # noqa
+        logger.error(msg)
         return False
     return True
 
 
-async def clone_repos_async(repos_dict: Dict[str, str], directory: Path) -> int:
-    # TODO: @devalv remove
-    logger.debug(f"Repos will be cloned to {directory.absolute()}")
-    repos_iter: Iterable = repos_dict.items()
+def clone_repos(repos_dict: Dict[str, str], directory: Path, max_workers: int) -> int:
+    cloned_repos_count: int = 0
 
-    # clone repos concurrently
-    clone_repo_corous: set = set()
-    for _, repo_url in repos_iter:
-        clone_repo_corous.add(clone_repo(directory, repo_url))
+    with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        to_do_map = dict()
+        for repo, url in repos_dict.items():
+            future = executor.submit(clone_repo, directory, url)
+            to_do_map[future] = url
 
-    cloned_repos: List[bool] = await asyncio.gather(
-        *clone_repo_corous
-    )
+        print(f'{to_do_map=}')
+        done_iter: Iterable = futures.as_completed(to_do_map)
 
-    # check how many repos was cloned
-    successfully_cloned_repos = len(list(filter(lambda r: r is True, cloned_repos)))
+        if logger.isEnabledFor(logging.DEBUG):
+            # TODO: @devalv not verbose тут и в еще одном месте
+            done_iter: Iterable = tqdm(done_iter, total=len(repos_dict))
 
-    return successfully_cloned_repos
+        for future in done_iter:
+            res_status = future.result()
+            if res_status:
+                cloned_repos_count += 1
 
-
-def clone_repos_threads(repos_dict: Dict[str, str], directory: Path) -> int:
-    raise NotImplementedError
-    # TODO: do with threads
-    logger.debug(f"Repos will be cloned to {directory.absolute()}")
-
-    # cloned_repos: int = 0
-    repos_iter: Iterable = repos_dict.items()
-
-    if logger.isEnabledFor(logging.DEBUG):
-        # TODO: not working with gather
-        repos_iter = tqdm(repos_iter)
-
-    # TODO: sync mode - need to compare
-    # for _, repo_url in repos_iter:
-    #     Git(directory).clone(repo_url)
-    #     cloned_repos += 1
-
-
-def clone_repos_simple(repos_dict: Dict[str, str], directory: Path) -> int:
-    logger.debug(f"Repos will be cloned to {directory.absolute()}")
-
-    cloned_repos: int = 0
-    repos_iter: Iterable = repos_dict.items()
-
-    if logger.isEnabledFor(logging.DEBUG):
-        repos_iter = tqdm(repos_iter)
-
-    for _, repo_url in repos_iter:
-        Git(directory).clone(repo_url)
-        cloned_repos += 1
-
-    return cloned_repos
+    return cloned_repos_count
 
 
 def get_liked_repos(username: str, pages: int) -> Dict[str, str]:
@@ -133,7 +107,7 @@ def get_liked_repos(username: str, pages: int) -> Dict[str, str]:
     return liked_repos
 
 
-def main(username: str, directory: str, pages: int) -> None:
+def main(username: str, directory: str, pages: int, workers: int) -> None:
     if logger.isEnabledFor(logging.DEBUG):
         start_time = time.time()
 
@@ -144,7 +118,9 @@ def main(username: str, directory: str, pages: int) -> None:
         working_dir.mkdir()
 
     repos_to_clone = get_liked_repos(username, pages)
-    cloned_repos: int = clone_repos_simple(repos_to_clone, directory=working_dir)
+    # repos_to_clone = {v: v for v in range(100)}
+
+    cloned_repos: int = clone_repos(repos_to_clone, directory=working_dir, max_workers=workers)
 
     if logger.isEnabledFor(logging.DEBUG):
         end_time = time.time()
@@ -167,12 +143,12 @@ if __name__ == "__main__":
     # TODO: create repo
     # TODO: install githook and github action for linting
 
+    # TODO: треды не сработали - задача не отпускает gil. процессы?
+
     args = parser.parse_args()
 
     if args.verbose:
         logger.setLevel('DEBUG')
 
-    # TODO: @devalv remove
-    # asyncio.run(main(username=args.user, directory=args.dir, pages=args.pages))
-    main(username=args.user, directory=args.dir, pages=args.pages)
+    main(username=args.user, directory=args.dir, pages=args.pages, workers=args.workers)
 

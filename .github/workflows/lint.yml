@@ -1,5 +1,3 @@
-# Linting: run black, flake8 and small auto fixers.
-
 name: Linters
 
 on:
