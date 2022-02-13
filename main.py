@@ -1,20 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-python cloner.py -u=devalv -d=../liked_repos -v -p 10 -w 1
+python cloner.py -u=devalv -d=../liked_repos -v -p 10 -w 1 -c -r
 """
 
 import argparse
 import logging
-import time
+import shutil
 from datetime import date
+from functools import wraps
+from multiprocessing import Pool
 from pathlib import Path
+from time import time
 from typing import Iterable, List, Set, Tuple
 
-from multiprocessing import Pool
-from tqdm import tqdm
 import httpx
 from git import Git
-
+from tqdm import tqdm
 
 # logging configuration
 formatter = logging.Formatter()
@@ -30,14 +31,61 @@ parser.add_argument(
     "-d", "--dir", help="directory where repos should be created", required=True
 )
 parser.add_argument(
-    "-v", "--verbose", help="verbose mode", required=False, default=False, action='store_true'
+    "-v",
+    "--verbose",
+    help="verbose mode",
+    required=False,
+    default=False,
+    action="store_true",
 )
 parser.add_argument(
-    "-p", "--pages", help="pages of starred repos to get", required=False, default=10, type=int
+    "-p",
+    "--pages",
+    help="pages of starred repos to get",
+    required=False,
+    default=10,
+    type=int,
 )
 parser.add_argument(
     "-w", "--workers", help="num of threads", required=False, default=1, type=int
 )
+parser.add_argument(
+    "-r",
+    "--remove",
+    help="remove downloaded dir",
+    required=False,
+    default=False,
+    action="store_true",
+)
+parser.add_argument(
+    "-c",
+    "--compress",
+    help="compress downloaded",
+    required=False,
+    default=False,
+    action="store_true",
+)
+
+
+def timing(func):
+    """Execution timer."""
+
+    @wraps(func)
+    def wrap(*args, **kw):
+        if logger.isEnabledFor(logging.DEBUG):
+            start_time = time()
+
+        result = func(*args, **kw)
+
+        if logger.isEnabledFor(logging.DEBUG):
+            end_time = time()
+            logger.debug(
+                f"Func `{func.__name__}` took {round(end_time - start_time)} sec."
+            )
+
+        return result
+
+    return wrap
 
 
 def clone_repo(directory: Path, url: str) -> bool:
@@ -49,6 +97,7 @@ def clone_repo(directory: Path, url: str) -> bool:
     return True
 
 
+@timing
 def clone_repos_mp(directory: Path, max_workers: int, repos_urls: Set[str]) -> int:
     """Run {max_workers} processes with clone_repo for each of repos_urls."""
     clone_repo_args_iter: Set[Tuple[Path, str]] = {(directory, url) for url in repos_urls}
@@ -59,6 +108,7 @@ def clone_repos_mp(directory: Path, max_workers: int, repos_urls: Set[str]) -> i
     return results.count(True)
 
 
+@timing
 def clone_repos_sync(directory: Path, repos_urls: Set[str]) -> int:
     """Run clone_repo for each of repos_urls."""
     cloned_repos: int = 0
@@ -75,6 +125,7 @@ def clone_repos_sync(directory: Path, repos_urls: Set[str]) -> int:
     return cloned_repos
 
 
+@timing
 def get_liked_repos(username: str, pages: int) -> Set[str]:
     """Synchronously generates a set of repositories from Github that are starred by user."""
     liked_repos: Set[str] = set()
@@ -106,10 +157,21 @@ def get_liked_repos(username: str, pages: int) -> Set[str]:
     return liked_repos
 
 
-def main(username: str, directory: str, pages: int, workers: int) -> None:
-    if logger.isEnabledFor(logging.DEBUG):
-        start_time = time.time()
+@timing
+def compress_repos(directory: Path, delete_dir: bool) -> None:
+    shutil.make_archive(directory.name, "zip", directory)
+    if delete_dir:
+        try:
+            shutil.rmtree(directory)
+        except PermissionError:
+            logger.error(f"Can`t delete {directory.name}")
+    return None
 
+
+@timing
+def main(
+    username: str, directory: str, pages: int, workers: int, compress: bool, remove: bool
+) -> None:
     assert Path(directory).is_dir()
     date_dir: str = date.today().strftime("%Y%m%d")
     working_dir: Path = Path(f"{directory}/{date_dir}")
@@ -119,34 +181,37 @@ def main(username: str, directory: str, pages: int, workers: int) -> None:
     repos_to_clone = get_liked_repos(username, pages)
 
     if workers > 1:
-        cloned_repos: int = clone_repos_mp(repos_urls=repos_to_clone, directory=working_dir, max_workers=workers)
+        cloned_repos: int = clone_repos_mp(
+            repos_urls=repos_to_clone, directory=working_dir, max_workers=workers
+        )
     else:
-        cloned_repos: int = clone_repos_sync(repos_urls=repos_to_clone, directory=working_dir)
+        cloned_repos: int = clone_repos_sync(
+            repos_urls=repos_to_clone, directory=working_dir
+        )
 
-    if logger.isEnabledFor(logging.DEBUG):
-        end_time = time.time()
-        logger.debug(f'Got {cloned_repos} repos for a {round(end_time-start_time)} sec.')
-
-    assert (
-        len(repos_to_clone) == cloned_repos
-    ),  f"Not all repos are cloned ({cloned_repos}/{len(repos_to_clone)}."
+    if len(repos_to_clone) != cloned_repos:
+        logger.error(f"Not all repos are cloned ({cloned_repos}/{len(repos_to_clone)})")
+    elif compress:
+        compress_repos(working_dir, delete_dir=remove)
 
     return None
 
 
 if __name__ == "__main__":
 
-    # TODO: create archive?
-    # import shutil
-    # shutil.make_archive(output_filename, 'zip', dir_name)
-
     # TODO: create readme
     # TODO: install githook and github action for linting
 
-    args = parser.parse_args()
+    user_args = parser.parse_args()
 
-    if args.verbose:
-        logger.setLevel('DEBUG')
+    if user_args.verbose:
+        logger.setLevel("DEBUG")
 
-    main(username=args.user, directory=args.dir, pages=args.pages, workers=args.workers)
-
+    main(
+        username=user_args.user,
+        directory=user_args.dir,
+        pages=user_args.pages,
+        workers=user_args.workers,
+        compress=user_args.compress,
+        remove=user_args.remove,
+    )
