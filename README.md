@@ -3,6 +3,9 @@ Liked repos cloner
 
 Script takes user public liked repos and clone it to a local folder.
 
+## Installation
+pip install -r requirements.txt
+
 ## How to run
 
 ### Simple example
