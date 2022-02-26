@@ -10,7 +10,7 @@ pip install -r requirements.txt
 
 ### Simple example
 ```bash
-python cloner.py -u=devalv -d=../liked_repos -v -p 10 -w 1 -c -r
+python main.py -u=devalv -d=../liked_repos -v -p 10 -w 1 -c -r
 ```
 
 ### Arguments
