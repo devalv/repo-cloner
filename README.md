@@ -18,7 +18,7 @@ venv/bin/pip3 install -r requirements.txt
 ### Simple example
 
 ```bash
-venv/bin/python3 main.py -u devalv -d . -w4 2>&1 | tee repo-cloner.log
+venv/bin/python3 main.py -u devalv -d . -w 4 2>&1 | tee repo-cloner.log
 ```
 
 ### Arguments
