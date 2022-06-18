@@ -1,25 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-python cloner.py -u=devalv -d=../liked_repos -v -p 10 -w 1 -c -r
+python main.py -u=devalv -d=. -w 4
 """
 
 import argparse
 import logging
+import re
 import shutil
 from datetime import date
-from functools import wraps
-from multiprocessing import Pool
+from multiprocessing import Pool, freeze_support
 from pathlib import Path
-from time import time
-from typing import Iterable, List, Set, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import httpx
-from git import Git
-from tqdm import tqdm
+from git import Git, GitCommandError
 
 # logging configuration
 formatter = logging.Formatter()
-logging.basicConfig(encoding="utf-8", format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    encoding="utf-8", format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger("repo_cloner")
 
 # argparse configuration
@@ -31,113 +31,63 @@ parser.add_argument(
     "-d", "--dir", help="directory where repos should be created", required=True
 )
 parser.add_argument(
-    "-v",
-    "--verbose",
-    help="verbose mode",
-    required=False,
-    default=False,
-    action="store_true",
-)
-parser.add_argument(
-    "-p",
-    "--pages",
-    help="pages of starred repos to get",
-    required=False,
-    default=10,
-    type=int,
-)
-parser.add_argument(
-    "-w", "--workers", help="num of threads", required=False, default=1, type=int
-)
-parser.add_argument(
-    "-r",
-    "--remove",
-    help="remove downloaded dir",
-    required=False,
-    default=False,
-    action="store_true",
+    "-w", "--workers", help="num of processes", required=False, default=1, type=int
 )
 parser.add_argument(
     "-c",
     "--compress",
     help="compress downloaded",
     required=False,
-    default=False,
+    default=True,
     action="store_true",
+)
+parser.add_argument(
+    "-t", "--token", help="github personal access token", required=False
 )
 
 
-def timing(func):
-    """Execution timer."""
+def _get_total_pages(username: str, token: Optional[str] = None) -> int:
+    headers: Dict[str, str] = {"accept": "application/vnd.github.v3+json"}
+    if token:
+        headers["Authorization"] = f"token {token}"
+    response = httpx.get(
+        f"https://api.github.com/users/{username}/starred",
+        headers=headers,
+        params={"page": 1, "per_page": 10},
+    )
+    if not response.is_success:
+        logger.error(f"Can`t fetch data: {response.text}.")
+        exit(1)
 
-    @wraps(func)
-    def wrap(*args, **kw):
-        if logger.isEnabledFor(logging.DEBUG):
-            start_time = time()
+    page_pattern = r"(?<=\?page=)(\d+)|(?<=\&page=)(\d+)"
+    page_search: List[Tuple[str, str]] = re.findall(
+        page_pattern, response.headers.get("link", ""), re.IGNORECASE
+    )
+    total_pages: int = 0
+    for group1, group2 in page_search:
+        page: int = int(group1) if group1 else int(group2)
+        if page > total_pages:
+            total_pages = page
 
-        result = func(*args, **kw)
+    if total_pages == 0:
+        logger.error("Can`t extract total pages.")
+        exit(1)
 
-        if logger.isEnabledFor(logging.DEBUG):
-            end_time = time()
-            logger.debug(
-                f"Func `{func.__name__}` took {round(end_time - start_time)} sec."
-            )
-
-        return result
-
-    return wrap
-
-
-def clone_repo(directory: Path, url: str) -> bool:
-    try:
-        Git(directory).clone(url)
-    except Exception as msg:  # noqa
-        logger.error(msg)
-        return False
-    return True
-
-
-@timing
-def clone_repos_mp(directory: Path, max_workers: int, repos_urls: Set[str]) -> int:
-    """Run {max_workers} processes with clone_repo for each of repos_urls."""
-    clone_repo_args_iter: Set[Tuple[Path, str]] = {(directory, url) for url in repos_urls}
-
-    with Pool(processes=max_workers) as p:
-        results: List[bool] = p.starmap(clone_repo, clone_repo_args_iter)
-
-    return results.count(True)
+    return total_pages
 
 
-@timing
-def clone_repos_sync(directory: Path, repos_urls: Set[str]) -> int:
-    """Run clone_repo for each of repos_urls."""
-    cloned_repos: int = 0
-    repos_iter: Iterable = repos_urls
-
-    if logger.isEnabledFor(logging.DEBUG):
-        repos_iter: Iterable = tqdm(repos_urls)
-
-    for repo_url in repos_iter:
-        result: bool = clone_repo(directory, repo_url)
-        if result:
-            cloned_repos += 1
-
-    return cloned_repos
-
-
-@timing
-def get_liked_repos(username: str, pages: int) -> Set[str]:
-    """Synchronously generates a set of repositories from Github that are starred by user."""
-    liked_repos: Set[str] = set()
-    pages_iter: Iterable = range(pages + 1)
-
-    if logger.isEnabledFor(logging.DEBUG):
-        pages_iter = tqdm(pages_iter)
-
-    for page in pages_iter:
+def get_liked_repos(
+    root_dir: Path, username: str, token: Optional[str] = None
+) -> List[Tuple[str, Path]]:
+    liked_repos: List[Tuple[str, Path]] = list()
+    total_pages: int = _get_total_pages(username=username, token=token)
+    headers: Dict[str, str] = {"accept": "application/vnd.github.v3+json"}
+    if token:
+        headers["Authorization"] = f"token {token}"
+    for page in range(1, total_pages + 1):
         response = httpx.get(
             f"https://api.github.com/users/{username}/starred",
-            headers={"accept": "application/vnd.github.v3+json"},
+            headers=headers,
             params={"page": page, "per_page": 10},
         )
         if not response.is_success:
@@ -146,70 +96,73 @@ def get_liked_repos(username: str, pages: int) -> Set[str]:
 
         for repo in response.json():
             url: str = repo.get("clone_url")
-            if not url:
-                _name: str = repo.get("name")
-                logger.warning(f"Can`t get url of {_name=}")
+            dir_name: str = repo.get("full_name")
+            if not url or not dir_name:
+                logger.warning(f"Can`t get url or name of {url=}|{dir_name=}")
                 continue
 
-            liked_repos.add(url)
+            repo_dir: Path = Path(f"{root_dir}/{dir_name}")
+            liked_repos.append((url, repo_dir))
 
-    logger.debug(f"Got {len(liked_repos)} liked repos.")
     return liked_repos
 
 
-@timing
-def compress_repos(directory: Path, delete_dir: bool) -> None:
+def _run_git(url: str, directory: Path) -> bool:
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        Git(directory).clone(url)
+    except GitCommandError as msg:
+        logger.error(msg)
+        return False
+    return True
+
+
+def clone_repos(max_workers: int, repos_for_download: List[Tuple[str, Path]]) -> int:
+    with Pool(processes=max_workers) as pool:
+        results: List[bool] = pool.starmap(_run_git, repos_for_download)
+    return results.count(True)
+
+
+def compress_repos(directory: Path) -> None:
     shutil.make_archive(directory.name, "zip", directory)
-    if delete_dir:
-        try:
-            shutil.rmtree(directory)
-        except PermissionError:
-            logger.error(f"Can`t delete {directory.name}")
+    try:
+        shutil.rmtree(directory)
+    except PermissionError:
+        logger.error(f"Can`t delete {directory.name}")
     return None
 
 
-@timing
 def main(
-    username: str, directory: str, pages: int, workers: int, compress: bool, remove: bool
+    username: str, directory: str, workers: int, compress: bool, token: str
 ) -> None:
     assert Path(directory).is_dir()
     date_dir: str = date.today().strftime("%Y%m%d")
-    working_dir: Path = Path(f"{directory}/{date_dir}")
-    if not working_dir.exists():
-        working_dir.mkdir()
+    root_dir: Path = Path(f"{directory}/{date_dir}")
 
-    repos_to_clone = get_liked_repos(username, pages)
+    repos_to_clone: List[Tuple[str, Path]] = get_liked_repos(
+        root_dir=root_dir, username=username, token=token
+    )
+    cloned_repos_count: int = clone_repos(
+        repos_for_download=repos_to_clone, max_workers=workers
+    )
 
-    if workers > 1:
-        cloned_repos: int = clone_repos_mp(
-            repos_urls=repos_to_clone, directory=working_dir, max_workers=workers
+    if len(repos_to_clone) != cloned_repos_count:
+        logger.error(
+            f"Not all repos are cloned ({cloned_repos_count}/{len(repos_to_clone)})"
         )
-    else:
-        cloned_repos: int = clone_repos_sync(
-            repos_urls=repos_to_clone, directory=working_dir
-        )
 
-    if len(repos_to_clone) != cloned_repos:
-        logger.error(f"Not all repos are cloned ({cloned_repos}/{len(repos_to_clone)})")
-
-    if compress:
-        compress_repos(working_dir, delete_dir=remove)
-
+    if compress and cloned_repos_count > 0:
+        compress_repos(root_dir)
     return None
 
 
 if __name__ == "__main__":
-
     user_args = parser.parse_args()
-
-    if user_args.verbose:
-        logger.setLevel("DEBUG")
-
+    freeze_support()
     main(
         username=user_args.user,
         directory=user_args.dir,
-        pages=user_args.pages,
         workers=user_args.workers,
         compress=user_args.compress,
-        remove=user_args.remove,
+        token=user_args.token,
     )
