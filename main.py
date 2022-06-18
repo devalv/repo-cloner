@@ -7,13 +7,13 @@ import argparse
 import logging
 import re
 import shutil
+import subprocess
 from datetime import date
 from multiprocessing import Pool, freeze_support
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import httpx
-from git import Git, GitCommandError
 
 # logging configuration
 formatter = logging.Formatter()
@@ -107,11 +107,10 @@ def get_liked_repos(
     return liked_repos
 
 
-def _run_git(url: str, directory: Path) -> bool:
-    directory.mkdir(parents=True, exist_ok=True)
+def _run_subprocess(url: str, directory: Path) -> bool:
     try:
-        Git(directory).clone(url)
-    except GitCommandError as msg:
+        subprocess.run(["git", "clone", url, directory], check=True)
+    except subprocess.CalledProcessError as msg:
         logger.error(msg)
         return False
     return True
@@ -119,7 +118,7 @@ def _run_git(url: str, directory: Path) -> bool:
 
 def clone_repos(max_workers: int, repos_for_download: List[Tuple[str, Path]]) -> int:
     with Pool(processes=max_workers) as pool:
-        results: List[bool] = pool.starmap(_run_git, repos_for_download)
+        results: List[bool] = pool.starmap(_run_subprocess, repos_for_download)
     return results.count(True)
 
 

@@ -4,13 +4,21 @@ Liked repos cloner
 Script takes user public liked repos and clone it to a local folder.
 
 ## Installation
-pip install -r requirements.txt
+
+Install git (if it`s not installed).
+
+```bash
+git clone https://github.com/devalv/repo-cloner && cd repo-cloner
+python3 -m venv venv
+venv/bin/pip3 install -r requirements.txt
+```
 
 ## How to run
 
 ### Simple example
+
 ```bash
-python main.py -u devalv -d . -w 4
+venv/bin/python3 main.py -u devalv -d . -w 4 2>&1 | tee repo-cloner.log
 ```
 
 ### Arguments
