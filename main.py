@@ -17,9 +17,6 @@ import httpx
 
 # logging configuration
 formatter = logging.Formatter()
-logging.basicConfig(
-    encoding="utf-8", format="%(asctime)s - %(levelname)s - %(message)s"
-)
 logger = logging.getLogger("repo_cloner")
 
 # argparse configuration
@@ -156,6 +153,9 @@ def main(
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+    encoding="utf-8", format="%(asctime)s - %(levelname)s - %(message)s"
+    )
     user_args = parser.parse_args()
     freeze_support()
     main(
