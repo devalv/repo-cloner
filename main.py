@@ -154,7 +154,7 @@ def main(
 
 if __name__ == "__main__":
     logging.basicConfig(
-    encoding="utf-8", format="%(asctime)s - %(levelname)s - %(message)s"
+        encoding="utf-8", format="%(asctime)s - %(levelname)s - %(message)s"
     )
     user_args = parser.parse_args()
     freeze_support()
