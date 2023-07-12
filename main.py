@@ -119,13 +119,19 @@ def clone_repos(max_workers: int, repos_for_download: List[Tuple[str, Path]]) ->
     return results.count(True)
 
 
-def compress_repos(directory: Path) -> None:
-    shutil.make_archive(directory.name, "zip", directory)
+def compress_repos(directory: Path, arch_dir: Optional[Path] = None) -> None:
+    arch = shutil.make_archive(directory.name, "zip", directory)
     try:
         shutil.rmtree(directory)
     except PermissionError:
         logger.error(f"Can`t delete {directory.name}")
-    return None
+    if not arch_dir:
+        return
+    try:
+        shutil.move(arch, arch_dir)
+    except PermissionError:
+        logger.error(f"Can`t move {arch} to {arch_dir}")
+    return
 
 
 def main(
@@ -133,6 +139,7 @@ def main(
 ) -> None:
     assert Path(directory).is_dir()
     date_dir: str = date.today().strftime("%Y%m%d")
+    arch_dir: Path = Path(directory)
     root_dir: Path = Path(f"{directory}/{date_dir}")
 
     repos_to_clone: List[Tuple[str, Path]] = get_liked_repos(
@@ -148,7 +155,7 @@ def main(
         )
 
     if compress and cloned_repos_count > 0:
-        compress_repos(root_dir)
+        compress_repos(root_dir, arch_dir)
     return None
 
 
