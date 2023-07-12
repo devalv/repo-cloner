@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  repo-cloner:
+
+    volumes:
+      - .download/:/home/app/download/
+    image: devalv/repo-cloner:latest  # autostart command (look in the Dockerfile)
+#    build: .  # manual build from a repo
+#    command: sh -c "python main.py -c -u devalv -d /home/app/download -w 2 -t <your_personal_token>"  # or use autostart command without token
